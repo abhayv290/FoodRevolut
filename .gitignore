@@ -29,3 +29,4 @@ db.sqlite3
 .flake8
 .vscode/*
 
+first.py

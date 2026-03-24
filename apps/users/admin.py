@@ -59,4 +59,4 @@ class EmailVerificationAdmin(admin.ModelAdmin):
     readonly_fields = ('token','created_at')
 
 
-admin.site.site_header = 'Zwigato-MyFoodDeliveryApp'
+admin.site.site_header = 'djFood-FoodDeliveryAPI'

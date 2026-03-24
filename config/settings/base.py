@@ -24,7 +24,8 @@ ASGI_APPLICATION = 'config.asgi.application'
 
 AUTH_USER_MODEL='users.User'
 
-
+RAZORPAY_KEY_ID = env('RAZORPAY_KEY_ID')
+RAZORPAY_KEY_SECRET = env('RAZORPAY_KEY_SECRET')
 # Application definition -----------------------------------------------
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -47,6 +48,7 @@ INSTALLED_APPS = [
     'apps.users',
     'apps.restaurants',
     'apps.orders',
+    'apps.payments',
 
 ]
 #middleware configurations -----------------------------------------------

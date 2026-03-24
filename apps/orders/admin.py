@@ -38,4 +38,4 @@ class OrderAdmin(admin.ModelAdmin):
     search_fields = ('customer__email','restaurant__name')
     list_filter = ('status','is_paid','payment_method')
     inlines = [OrderItemInline, OrderStatusHistoryInline]
-    readonly_fields = ('customer','restaurant','total_amount','payment_method','is_paid','placed_at','delivery_address','delivery_fee','subtotal')
+    readonly_fields = ('customer','restaurant','total_amount','is_paid','placed_at','delivery_address','delivery_fee','subtotal')

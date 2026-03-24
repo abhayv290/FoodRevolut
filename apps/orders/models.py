@@ -108,6 +108,9 @@ class Order(models.Model):
 
     class Meta:
         ordering = ['-placed_at']
+        indexes = [
+            models.Index(fields=['status']),
+        ]
 
     def __str__(self):
         return f"Order-{self.id} by {self.customer.email} from {self.restaurant.name}"   
@@ -170,7 +173,7 @@ class OrderStatusHistory(models.Model):
         verbose_name_plural = 'Order Status Histories'
     
     def __str__(self):
-        return f"Order {self.order.id} changed to {self.status} at {self.changed_at}"
+        return f"Order {self.order.id} changed to {self.status}"
 
 
 
