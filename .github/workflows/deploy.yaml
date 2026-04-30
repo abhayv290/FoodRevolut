@@ -196,6 +196,10 @@ jobs:
             # Move to app directory
             cd /home/ubuntu/foodrevolut
 
+            # ── Save current tag before deploying ───────────────────────────
+            PREV_TAG=$(cat .current_tag 2>/dev/null || echo "latest")
+            echo "Previous tag: $PREV_TAG"
+
             # Pull latest code (for docker-compose.prod.yaml and nginx config)
             git pull origin main
 
@@ -210,36 +214,62 @@ jobs:
             export IMAGE_TAG=${{ env.IMAGE_TAG }}
 
             # Pull the new image
-                      docker compose -f docker-compose.prod.yaml pull
+            docker compose -f docker-compose.prod.yaml pull
 
             # ── Zero-downtime restart ─────────────────────────────────────
             # Start new containers before stopping old ones
-                      docker compose -f docker-compose.prod.yaml up -d --no-deps web
-                      docker compose -f docker-compose.prod.yaml up -d --no-deps worker
-                      docker compose -f docker-compose.prod.yaml up -d --no-deps beat
-                      docker compose -f docker-compose.prod.yaml up -d --no-deps nginx
+            docker compose -f docker-compose.prod.yaml up -d --no-deps web
+            docker compose -f docker-compose.prod.yaml up -d --no-deps worker
+            docker compose -f docker-compose.prod.yaml up -d --no-deps beat
+            docker compose -f docker-compose.prod.yaml up -d --no-deps nginx
 
             # Run migrations on the new container
                       docker compose -f docker-compose.prod.yaml exec -T web \
               python manage.py migrate --noinput
+
+            # ── Save new tag only after successful start ─────────────────────
+            echo $IMAGE_TAG > .current_tag
 
             # Clean up old Docker images to save disk space
             docker image prune -f
 
             echo "✅ Deployment complete — image: $IMAGE_TAG"
 
-      - name: Health check after deploy
-        run: |
-          sleep 30
-          for i in $(seq 1 5); do
-            response=$(curl -s -o /dev/null -w "%{http_code}" \
-                 http://${{ secrets.EC2_HOST }}/api/health/)
-               if [ "$response" -eq 200 ]; then
-                 echo "✅ Health check passed"
-                 exit 0
-               fi
-               echo "Attempt $i failed (HTTP $response), retrying..."
-               sleep 10
-             done
-             echo "❌ Health check failed after 5 attempts"
-             exit 1
+      - name: Health check with rollback
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: IMAGE_TAG,AWS_REGION
+          script: |
+            cd /home/ubuntu/foodrevolut
+
+            PASSED=false
+            for i in $(seq 1 6); do
+              STATUS=$(curl -sk -o /dev/null -w "%{http_code}" \
+                https://${{ secrets.MY_DOMAIN }}/api/health/ || echo "000")
+              echo "Attempt $i: HTTP $STATUS"
+              if [ "$STATUS" = "200" ]; then
+                PASSED=true
+                break
+              fi
+              sleep 10
+            done
+
+            if [ "$PASSED" = "false" ]; then
+              echo "❌ Health check failed — rolling back..."
+
+              PREV_TAG=$(cat .current_tag 2>/dev/null || echo "latest")
+              export ECR_REGISTRY=${{ needs.build.outputs.registry }}
+              export ECR_REPOSITORY=${{ env.ECR_REPOSITORY }}
+              export IMAGE_TAG=$PREV_TAG
+
+              docker compose -f docker-compose.prod.yaml up -d \
+                --no-deps web worker beat
+
+              echo "⏪ Rolled back to: $PREV_TAG"
+              exit 1
+            fi
+
+            echo "✅ Health check passed"

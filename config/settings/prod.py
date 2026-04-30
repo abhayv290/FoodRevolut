@@ -17,8 +17,7 @@ CSRF_COOKIE_SECURE             = True
 SECURE_HSTS_SECONDS            = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD            = True 
-
-
+SECURE_REDIRECT_EXEMPT = [r'^api/health/$']
 # ── Static and media — both from S3 ──────────────────────────────────────────
 # Nginx no longer serves static or media files directly.
 # Browser fetches them from S3 URLs.
