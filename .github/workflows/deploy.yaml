@@ -152,21 +152,15 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           envs: IMAGE_TAG,AWS_REGION
-          # ── command_timeout prevents hanging forever ──────────────────
           command_timeout: 10m
           script: |
             set -e
-
             cd /home/ubuntu/foodrevolut
 
-            # ── Read last known good tag ──────────────────────────────────
-            # .stable_tag is only written after a SUCCESSFUL health check
-            # so it always points to the last working deployment
             STABLE_TAG=$(cat .stable_tag 2>/dev/null || echo "")
             echo "🔖 Stable tag: ${STABLE_TAG:-none}"
             echo "🚀 New tag: $IMAGE_TAG"
 
-            # ── Setup ─────────────────────────────────────────────────────
             git pull origin main
 
             aws ecr get-login-password --region $AWS_REGION | \
@@ -177,30 +171,48 @@ jobs:
             export ECR_REPOSITORY=${{ env.ECR_REPOSITORY }}
             export IMAGE_TAG=${{ env.IMAGE_TAG }}
 
-            # ── Pull new image ─────────────────────────────────────────────
-            echo "📦 Pulling new image..."
             docker compose -f docker-compose.prod.yaml pull
 
-            # ── Run migrations BEFORE swapping containers ──────────────────
-            # Spin up a temporary container to run migrations safely
-            # If migrations fail → stop here, old containers keep running
+            # ── Step 1: migrations only 
             echo "🔄 Running migrations..."
             docker run --rm \
               --env-file .env.prod \
               -e DJANGO_SETTINGS_MODULE=config.settings.prod \
-              $ECR_REGISTRY/$ECR_REPOSITORY:${{ env.IMAGE_TAG }} \
+              -e RUN_MIGRATIONS=true \
+              -e RUN_COLLECTSTATIC=false \
+              $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
               python manage.py migrate --noinput
 
             echo "✅ Migrations passed"
 
-            # ── Swap containers ────────────────────────────────────────────
+            # ── Step 2: collectstatic only if static files changed 
+            STATIC_CHANGED=$(git diff --name-only HEAD~1 HEAD -- \
+              'static/' 'templates/' '*/static/' \
+              '*.css' '*.js' '*.png' '*.jpg' '*.svg' \
+              2>/dev/null | wc -l)
+
+            if [ "$STATIC_CHANGED" -gt "0" ]; then
+              echo "📁 Static files changed ($STATIC_CHANGED files) — uploading to S3..."
+              docker run --rm \
+                --env-file .env.prod \
+                -e DJANGO_SETTINGS_MODULE=config.settings.prod \
+                -e RUN_MIGRATIONS=false \
+                -e RUN_COLLECTSTATIC=false \
+                $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+                python manage.py collectstatic --noinput --clear
+              echo "✅ Static files uploaded"
+            else
+              echo "⏭️ No static file changes — skipping collectstatic"
+            fi
+
+            # ── Step 3: swap containers ───────────────────────────────────────
             echo "🔁 Swapping containers..."
             docker compose -f docker-compose.prod.yaml up -d --no-deps web
             docker compose -f docker-compose.prod.yaml up -d --no-deps worker
             docker compose -f docker-compose.prod.yaml up -d --no-deps beat
             docker compose -f docker-compose.prod.yaml up -d --no-deps nginx
 
-            # ── Health check ───────────────────────────────────────────────
+            # ── Step 4: health check with rollback ────────────────────────────
             echo "🏥 Running health check..."
             PASSED=false
 
@@ -208,7 +220,6 @@ jobs:
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
                 http://${{secrets.EC2_HOST}}/api/health/ 2>/dev/null || echo "000")
               echo "  Attempt $i/8: HTTP $STATUS"
-
               if [ "$STATUS" = "200" ]; then
                 PASSED=true
                 break
@@ -216,26 +227,21 @@ jobs:
               sleep 10
             done
 
-            # ── Rollback if health check failed ────────────────────────────
+            # ── Step 5: rollback if failed ────────────────────────────────────
             if [ "$PASSED" = "false" ]; then
               echo "❌ Health check failed!"
 
               if [ -z "$STABLE_TAG" ]; then
-                echo "⚠️ No stable tag found — cannot rollback automatically"
-                echo "   Fix the issue and redeploy manually"
+                echo "⚠️ No stable tag — cannot rollback"
                 exit 1
               fi
 
-              echo "⏪ Rolling back to stable tag: $STABLE_TAG"
-
+              echo "⏪ Rolling back to: $STABLE_TAG"
               export IMAGE_TAG=$STABLE_TAG
               docker compose -f docker-compose.prod.yaml pull
-              docker compose -f docker-compose.prod.yaml up -d --no-deps web
-              docker compose -f docker-compose.prod.yaml up -d --no-deps worker
-              docker compose -f docker-compose.prod.yaml up -d --no-deps beat
-              docker compose -f docker-compose.prod.yaml up -d --no-deps nginx
+              docker compose -f docker-compose.prod.yaml up -d \
+                --no-deps web worker beat nginx
 
-              # Verify rollback succeeded
               sleep 15
               ROLLBACK_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
                 http://${{secrets.EC2_HOST}}/api/health/ 2>/dev/null || echo "000")
@@ -243,16 +249,104 @@ jobs:
               if [ "$ROLLBACK_STATUS" = "200" ]; then
                 echo "✅ Rollback successful — running on: $STABLE_TAG"
               else
-                echo "💀 Rollback also failed — manual intervention needed!"
+                echo "💀 Rollback also failed — manual fix needed!"
               fi
 
-              # Fail the workflow so GitHub marks deploy as failed
               exit 1
             fi
 
-            # ── Success — save this tag as new stable ──────────────────────
-            echo ${{ env.IMAGE_TAG }} > .stable_tag
-            echo "💾 Saved stable tag: ${{ env.IMAGE_TAG }}"
+            # ── Step 6: save stable tag ───────────────────────────────────────
+            echo $IMAGE_TAG > .stable_tag
+            echo "💾 Saved new stable tag: $IMAGE_TAG"
 
             docker image prune -f
-            echo "✅ Deployment complete — image: $IMAGE_TAG"
+            echo "✅ Deployment complete — image: $IMAGE_TAG" Setup ─────────────────────────────────────────────────────
+                  git pull origin main
+
+                  aws ecr get-login-password --region $AWS_REGION | \
+                    docker login --username AWS --password-stdin \
+                    ${{ needs.build.outputs.registry }}
+
+                  export ECR_REGISTRY=${{ needs.build.outputs.registry }}
+                  export ECR_REPOSITORY=${{ env.ECR_REPOSITORY }}
+                  export IMAGE_TAG=${{ env.IMAGE_TAG }}
+
+                  # ── Pull new image ─────────────────────────────────────────────
+                  echo "📦 Pulling new image..."
+                  docker compose -f docker-compose.prod.yaml pull
+
+                  # ── Run migrations BEFORE swapping containers ──────────────────
+                  # Spin up a temporary container to run migrations safely
+                  # If migrations fail → stop here, old containers keep running
+                  echo "🔄 Running migrations..."
+                  docker run --rm \
+                    --env-file .env.prod \
+                    -e DJANGO_SETTINGS_MODULE=config.settings.prod \
+                    $ECR_REGISTRY/$ECR_REPOSITORY:${{ env.IMAGE_TAG }} \
+                    python manage.py migrate --noinput
+
+                  echo "✅ Migrations passed"
+
+                  # ── Swap containers ────────────────────────────────────────────
+                  echo "🔁 Swapping containers..."
+                  docker compose -f docker-compose.prod.yaml up -d --no-deps web
+                  docker compose -f docker-compose.prod.yaml up -d --no-deps worker
+                  docker compose -f docker-compose.prod.yaml up -d --no-deps beat
+                  docker compose -f docker-compose.prod.yaml up -d --no-deps nginx
+
+                  # ── Health check ───────────────────────────────────────────────
+                  echo "🏥 Running health check..."
+                  PASSED=false
+
+                  for i in $(seq 1 8); do
+                    STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                      http://${{secrets.EC2_HOST}}/api/health/ 2>/dev/null || echo "000")
+                    echo "  Attempt $i/8: HTTP $STATUS"
+
+                    if [ "$STATUS" = "200" ]; then
+                      PASSED=true
+                      break
+                    fi
+                    sleep 10
+                  done
+
+                  # ── Rollback if health check failed ────────────────────────────
+                  if [ "$PASSED" = "false" ]; then
+                    echo "❌ Health check failed!"
+
+                    if [ -z "$STABLE_TAG" ]; then
+                      echo "⚠️ No stable tag found — cannot rollback automatically"
+                      echo "   Fix the issue and redeploy manually"
+                      exit 1
+                    fi
+
+                    echo "⏪ Rolling back to stable tag: $STABLE_TAG"
+
+                    export IMAGE_TAG=$STABLE_TAG
+                    docker compose -f docker-compose.prod.yaml pull
+                    docker compose -f docker-compose.prod.yaml up -d --no-deps web
+                    docker compose -f docker-compose.prod.yaml up -d --no-deps worker
+                    docker compose -f docker-compose.prod.yaml up -d --no-deps beat
+                    docker compose -f docker-compose.prod.yaml up -d --no-deps nginx
+
+                    # Verify rollback succeeded
+                    sleep 15
+                    ROLLBACK_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                      http://${{secrets.EC2_HOST}}/api/health/ 2>/dev/null || echo "000")
+
+                    if [ "$ROLLBACK_STATUS" = "200" ]; then
+                      echo "✅ Rollback successful — running on: $STABLE_TAG"
+                    else
+                      echo "💀 Rollback also failed — manual intervention needed!"
+                    fi
+
+                    # Fail the workflow so GitHub marks deploy as failed
+                    exit 1
+                  fi
+
+                  # ── Success — save this tag as new stable ──────────────────────
+                  echo ${{ env.IMAGE_TAG }} > .stable_tag
+                  echo "💾 Saved stable tag: ${{ env.IMAGE_TAG }}"
+
+                  docker image prune -f
+                  echo "✅ Deployment complete — image: $IMAGE_TAG"
