@@ -81,11 +81,9 @@ class CartItemView(APIView):
             },status=status.HTTP_400_BAD_REQUEST)
         
         quantity=int(quantity)
-        cart_item.quantity = cart_item.quantity+quantity 
-        cart_item.save(update_fields=['quantity'])
 
         #remove item if quantity set to 0 
-        if cart_item.quantity<=0:
+        if quantity<=0:
             cart_item.delete()
             #if cart item is empty 
             #reset restaurant  to None ,so that user 
@@ -95,7 +93,13 @@ class CartItemView(APIView):
                 cart.restaurant = None 
                 cart.save(update_fields=['restaurant'])
             return Response(CartSerializer(cart).data)
-
+        
+        if quantity>20:
+            return Response({
+                'error' : 'max 20 allowed'
+            },status=status.HTTP_400_BAD_REQUEST)
+        cart_item.quantity = quantity
+        cart_item.save(update_fields=['quantity'])
         return Response(CartSerializer(cart).data)
     
     #delete a cart item
