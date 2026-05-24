@@ -73,7 +73,7 @@ class CartItemView(APIView):
         cart = self.get_cart(request.user)
         cart_item = get_object_or_404(CartItem,pk=pk,cart=cart)
 
-        quantity = cart_item.quantity
+        quantity = request.data.get('quantity')
         if quantity is None:
             return Response({
                 'error':'quantity is required',
@@ -81,9 +81,11 @@ class CartItemView(APIView):
             },status=status.HTTP_400_BAD_REQUEST)
         
         quantity=int(quantity)
+        cart_item.quantity = cart_item.quantity+quantity 
+        cart_item.save(update_fields=['quantity'])
 
         #remove item if quantity set to 0 
-        if quantity<=0:
+        if cart_item.quantity<=0:
             cart_item.delete()
             #if cart item is empty 
             #reset restaurant  to None ,so that user 
@@ -94,8 +96,6 @@ class CartItemView(APIView):
                 cart.save(update_fields=['restaurant'])
             return Response(CartSerializer(cart).data)
 
-        cart_item.quantity = quantity 
-        cart_item.save(update_fields=['quantity'])
         return Response(CartSerializer(cart).data)
     
     #delete a cart item

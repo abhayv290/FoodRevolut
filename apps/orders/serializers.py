@@ -65,18 +65,21 @@ class CartItemSerializer(ModelSerializer):
     def create(self,validated_data):
         cart = self.context['cart']
         menu_item = validated_data['menu_item']
-        variant=validated_data.get('variant')
+        variant=validated_data.get('variant') 
         quantity = validated_data['quantity']
 
         #Upsert Pattern 
         #Crete a Cart item if does not exists
         #if exists increment the quantity of that item
         cart_item,created  = CartItem.objects.get_or_create(
-            cart=cart,menu_item=menu_item,variant=variant,quantity=quantity
+            cart=cart,menu_item=menu_item,variant=variant
         )
+        if created:
+            cart_item.quantity=quantity
+        
         if not created:
             cart_item.quantity+=quantity
-            cart_item.save(update_fields=['quantity'])
+        cart_item.save(update_fields=['quantity'])
         
         if not cart.restaurant:
             cart.restaurant=menu_item.category.restaurant
