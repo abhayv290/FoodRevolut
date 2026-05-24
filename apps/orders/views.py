@@ -73,7 +73,7 @@ class CartItemView(APIView):
         cart = self.get_cart(request.user)
         cart_item = get_object_or_404(CartItem,pk=pk,cart=cart)
 
-        quantity = request.user.get('quantity')
+        quantity = cart_item.quantity
         if quantity is None:
             return Response({
                 'error':'quantity is required',
@@ -108,7 +108,7 @@ class CartItemView(APIView):
             #reset the Restaurant
             cart.restaurant = None
             cart.save(update_fields=['restaurant'])
-            Response(CartSerializer(cart).data)
+            return Response(CartSerializer(cart).data)
 
 
 @extend_schema(tags=['Checkout Flow'], request=CheckoutSerializer, responses=OrderSerializer)

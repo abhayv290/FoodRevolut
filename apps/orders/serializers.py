@@ -65,7 +65,7 @@ class CartItemSerializer(ModelSerializer):
     def create(self,validated_data):
         cart = self.context['cart']
         menu_item = validated_data['menu_item']
-        variant=validated_data['variant']
+        variant=validated_data.get('variant')
         quantity = validated_data['quantity']
 
         #Upsert Pattern 
