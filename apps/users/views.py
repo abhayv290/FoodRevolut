@@ -115,10 +115,19 @@ class LoginView(APIView):
         user.save(update_fields=["last_login"])
 
         # fire email notification to user after login 
-       
+        forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+        ip_address = forwarded_for.split(",")[0].strip() if forwarded_for else request.META.get("REMOTE_ADDR")
+        client_hints = {
+            "sec_ch_ua": request.META.get("HTTP_SEC_CH_UA"),
+            "sec_ch_ua_full_version_list": request.META.get("HTTP_SEC_CH_UA_FULL_VERSION_LIST"),
+            "sec_ch_ua_platform": request.META.get("HTTP_SEC_CH_UA_PLATFORM"),
+            "sec_ch_ua_model": request.META.get("HTTP_SEC_CH_UA_MODEL"),
+        }
+
         notify_new_login.delay(str(user.id),
-                               ip_address=request.META.get('REMOTE_ADDR'),
-                               user_agent = request.META.get('HTTP_USER_AGENT','Unknown Device')) #type:ignore
+                               ip_address=ip_address,
+                               user_agent=request.META.get('HTTP_USER_AGENT','Unknown Device'),
+                               client_hints=client_hints) #type:ignore
         return Response({
             "tokens":    get_tokens_for_user(user),
             "role":      user.role,

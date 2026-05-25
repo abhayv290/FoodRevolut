@@ -25,7 +25,7 @@ class CategoryInline(admin.TabularInline):
 @admin.register(Restaurants)
 class RestaurantAdmin(admin.ModelAdmin):
     list_display = ('name','cuisine_type','city','is_active','is_open','average_rating','total_ratings')
-    list_filter = ('cuisine_type','is_active','is_open','average_rating')
+    list_filter = ('cuisine_type','is_active','is_open','average_rating','is_premium')
     list_editable = ('is_open','is_active',)
     search_fields = ('name','cuisine_type','city','owner__email')
     ordering = ('-created_at',)
@@ -38,7 +38,7 @@ class RestaurantAdmin(admin.ModelAdmin):
         ("Basic info",    {"fields": ("owner", "name", "description", "cuisine_type", "image")}),
         ("Location",      {"fields": ("address","city","pincode", "phone", "lat", "long")}),
         ("Delivery",      {"fields": ("min_order_amount","avg_preparing_time")}),
-        ("Status",        {"fields": ("is_active", "is_open")}),
+        ("Status",        {"fields": ("is_active", "is_open",'is_premium')}),
         ("Stats",         {"fields": ("average_rating", "total_ratings"), "classes": ("collapse",)}),
         # ↑ collapse — stats section hidden by default, click to expand
     )
